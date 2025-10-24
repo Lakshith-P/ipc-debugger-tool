@@ -4,9 +4,9 @@ import { Play, Pause, RotateCcw, Zap, AlertTriangle, Cpu, Lock, Unlock, HardHat,
 // --- Configuration Constants ---
 const IPC_TYPES = {
   PIPE: 'Pipe (FIFO)',
-  QUEUE: 'Message Queue (Priority)', // Renamed for clarity
+  QUEUE: 'Message Queue (Priority)', // Revision 3
   SHARED_MEMORY: 'Shared Memory (Mutex)',
-  RESOURCES_DEADLOCK: 'Resource Deadlock (Simulated)', 
+  RESOURCES_DEADLOCK: 'Resource Deadlock (Simulated)', // Revision 2
 };
 const MAX_BUFFER_SIZE = 10;
 const INITIAL_SHARED_MEMORY = { value: 0, accessed: 0 };
@@ -20,8 +20,14 @@ const INITIAL_RESOURCE_STATE = {
   deadlock: false,
 };
 
+// Initial state for calculated performance metrics (Revision 4)
+const INITIAL_PERF_METRICS = {
+  throughput: 0, // items per second
+  avgWaitTimeA: 0, // ms
+  avgWaitTimeB: 0, // ms
+};
+
 // --- Helper Functions ---
-// Now returns an object { value: number, priority: 1|2|3 }
 const generateChunk = () => {
     const priority = Math.floor(Math.random() * 3) + 1; // 1 (High) to 3 (Low)
     return { 
@@ -55,13 +61,6 @@ const getPriorityColor = (priority) => {
     }
 }
 
-// Initial state for calculated performance metrics
-const INITIAL_PERF_METRICS = {
-  throughput: 0, // items per second
-  avgWaitTimeA: 0, // ms
-  avgWaitTimeB: 0, // ms
-};
-
 const App = () => {
   // --- Simulation State (IPC Engine Core) ---
   const [isRunning, setIsRunning] = useState(false);
@@ -77,7 +76,6 @@ const App = () => {
   const [logs, setLogs] = useState([]);
   const [metrics, setMetrics] = useState({ produced: 0, consumed: 0, aWaitTime: 0, bWaitTime: 0, cycle: 0, startTime: Date.now() });
   
-  // NEW State for calculated metrics
   const [perfMetrics, setPerfMetrics] = useState(INITIAL_PERF_METRICS); 
 
   const intervalRef = useRef(null);
@@ -104,9 +102,8 @@ const App = () => {
   
   // --- Metric Calculation Function (Revision 4) ---
   const calculatePerformanceMetrics = useCallback(() => {
-    if (metrics.cycle < 10) return; // Wait for enough cycles to stabilize
+    if (metrics.cycle < 10) return;
 
-    // Time elapsed in seconds
     const timeElapsedSeconds = (Date.now() - metrics.startTime) / 1000;
     
     // 1. Throughput (Average items processed per second)
@@ -114,7 +111,6 @@ const App = () => {
     const throughput = timeElapsedSeconds > 0 ? (totalProcessed / timeElapsedSeconds) : 0;
 
     // 2. Latency (Average Wait Time per process)
-    // Each cycle represents 100ms of simulated time.
     const avgWaitTimeA = metrics.produced > 0 
       ? (metrics.aWaitTime * 100) / metrics.produced 
       : 0;
@@ -143,7 +139,7 @@ const App = () => {
     } else if (resources.R1.heldBy === 'B') {
       setResources(prev => ({ ...prev, R1: { ...prev.R1, requestedBy: 'A' } }));
       setProcessAState('BLOCKED');
-      setMetrics(m => ({ ...m, aWaitTime: m.aWaitTime + 1 })); // Track wait time
+      setMetrics(m => ({ ...m, aWaitTime: m.aWaitTime + 1 })); 
       addLog('WARNING', '[P-A] Waiting for R1 (held by P-B).');
     }
 
@@ -155,7 +151,7 @@ const App = () => {
     } else if (resources.R1.heldBy === 'A' && resources.R2.heldBy === 'B') {
       setResources(prev => ({ ...prev, R2: { ...prev.R2, requestedBy: 'A' } }));
       setProcessAState('BLOCKED');
-      setMetrics(m => ({ ...m, aWaitTime: m.aWaitTime + 1 })); // Track wait time
+      setMetrics(m => ({ ...m, aWaitTime: m.aWaitTime + 1 })); 
       if (resources.R1.requestedBy === 'B') {
         setResources(prev => ({ ...prev, deadlock: true }));
       }
@@ -172,7 +168,7 @@ const App = () => {
     } else if (resources.R2.heldBy === 'A') {
       setResources(prev => ({ ...prev, R2: { ...prev.R2, requestedBy: 'B' } }));
       setProcessBState('BLOCKED');
-      setMetrics(m => ({ ...m, bWaitTime: m.bWaitTime + 1 })); // Track wait time
+      setMetrics(m => ({ ...m, bWaitTime: m.bWaitTime + 1 })); 
       addLog('WARNING', '[P-B] Waiting for R2 (held by P-A).');
     }
 
@@ -184,7 +180,7 @@ const App = () => {
     } else if (resources.R2.heldBy === 'B' && resources.R1.heldBy === 'A') {
       setResources(prev => ({ ...prev, R1: { ...prev.R1, requestedBy: 'B' } }));
       setProcessBState('BLOCKED');
-      setMetrics(m => ({ ...m, bWaitTime: m.bWaitTime + 1 })); // Track wait time
+      setMetrics(m => ({ ...m, bWaitTime: m.bWaitTime + 1 })); 
       if (resources.R2.requestedBy === 'A') {
         setResources(prev => ({ ...prev, deadlock: true }));
       }
@@ -209,13 +205,13 @@ const App = () => {
         addLog('INFO', `[P-A] Produced chunk: ${chunk.value} (Prio: ${chunk.priority}). Buffer size: ${buffer.length + 1}/${MAX_BUFFER_SIZE}`);
       } else {
         setProcessAState('BLOCKED');
-        setMetrics(m => ({ ...m, aWaitTime: m.aWaitTime + 1 })); // Track wait time
+        setMetrics(m => ({ ...m, aWaitTime: m.aWaitTime + 1 })); 
         addLog('WARNING', '[P-A] Buffer Full. Producer Blocked (Bottleneck)');
       }
     } else if (ipcType === IPC_TYPES.SHARED_MEMORY) {
       if (lockHeldBy === 'B') {
         setProcessAState('WAITING');
-        setMetrics(m => ({ ...m, aWaitTime: m.aWaitTime + 1 })); // Track wait time
+        setMetrics(m => ({ ...m, aWaitTime: m.aWaitTime + 1 })); 
       } else if (lockHeldBy === null) {
         setLockHeldBy('A');
         setProcessAState('RUNNING');
@@ -238,7 +234,7 @@ const App = () => {
 
     if (buffer.length === 0) {
         setProcessBState('BLOCKED');
-        setMetrics(m => ({ ...m, bWaitTime: m.bWaitTime + 1 })); // Track wait time
+        setMetrics(m => ({ ...m, bWaitTime: m.bWaitTime + 1 })); 
         addLog('WARNING', '[C-B] Buffer Empty. Consumer Blocked (Starvation)');
         return;
     }
@@ -265,7 +261,7 @@ const App = () => {
     } else if (ipcType === IPC_TYPES.SHARED_MEMORY) {
       if (lockHeldBy === 'A') {
         setProcessBState('WAITING');
-        setMetrics(m => ({ ...m, bWaitTime: m.bWaitTime + 1 })); // Track wait time
+        setMetrics(m => ({ ...m, bWaitTime: m.bWaitTime + 1 })); 
       } else if (lockHeldBy === null) {
         setLockHeldBy('B');
         setProcessBState('RUNNING');
@@ -357,9 +353,9 @@ const App = () => {
 
     if (isDeadlockSim) {
       return (
-        <div className="flex flex-col items-center p-4 bg-zinc-700 rounded-lg shadow-inner">
+        <div className="flex flex-col items-center p-4 bg-zinc-700 rounded-lg shadow-inner w-full">
           <p className='text-sm text-indigo-300 font-semibold mb-3'>Resource Allocation Graph Simulation</p>
-          <div className="flex space-x-8 items-start">
+          <div className="flex space-x-4 sm:space-x-8 items-start justify-center w-full">
             <ResourceBox name="R1" resource={resources.R1} />
             <ResourceBox name="R2" resource={resources.R2} />
           </div>
@@ -375,7 +371,7 @@ const App = () => {
 
     if (isShared) {
       return (
-        <div className="flex flex-col items-center p-4 bg-zinc-700 rounded-lg shadow-inner">
+        <div className="flex flex-col items-center p-4 bg-zinc-700 rounded-lg shadow-inner w-full">
           <div className={`w-full p-4 text-center rounded-lg font-mono text-xl transition-all duration-300 ${isContended ? 'bg-red-900 ring-4 ring-red-500' : 'bg-gray-800'}`}>
             <span className="text-gray-400">Memory Segment: </span>
             <span className="font-bold text-white">{sharedMemory.value}</span>
@@ -390,7 +386,7 @@ const App = () => {
         <div className="flex flex-col items-center w-full">
           <div className="flex flex-row space-x-0.5 w-full h-14 bg-zinc-700 p-1 rounded-lg relative">
             {ipcType === IPC_TYPES.QUEUE && (
-                <div className="absolute top-0 right-0 p-1 bg-indigo-700 text-xs rounded-bl-lg text-white font-semibold flex items-center">
+                <div className="absolute top-0 right-0 p-1 bg-indigo-700 text-xs rounded-bl-lg text-white font-semibold flex items-center z-10">
                     <Server className='w-3 h-3 mr-1' /> Priority Queue
                 </div>
             )}
@@ -424,8 +420,8 @@ const App = () => {
 
   // Resource Box for Deadlock Visualization
   const ResourceBox = ({ name, resource }) => (
-    <div className={`p-4 rounded-lg w-40 text-center shadow-lg transition-all duration-300 ${resource.heldBy ? 'bg-indigo-700 ring-2 ring-indigo-400' : 'bg-zinc-800'}`}>
-      <div className="font-bold text-lg text-white mb-2">{name}</div>
+    <div className={`p-3 rounded-lg w-32 sm:w-40 text-center shadow-lg transition-all duration-300 ${resource.heldBy ? 'bg-indigo-700 ring-2 ring-indigo-400' : 'bg-zinc-800'}`}>
+      <div className="font-bold text-lg text-white mb-1">{name}</div>
       <div className='text-sm text-gray-300'>
         {resource.heldBy ? (
           <span className='flex items-center justify-center text-sm font-semibold'>
@@ -462,7 +458,7 @@ const App = () => {
     </div>
   );
 
-  // NEW Component: Flow Diagram Guide (Revision 5)
+  // Component: Flow Diagram Guide (Revision 5)
   const FlowDiagramGuide = ({ ipcType }) => {
     let title = "IPC Mechanism Flow";
     let flowSteps = [];
@@ -525,13 +521,15 @@ const App = () => {
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 p-4 font-sans">
-      <div className="max-w-4xl mx-auto">
+      {/* Increased max-w for better desktop viewing, mx-auto centers the container */}
+      <div className="max-w-5xl mx-auto"> 
         <h1 className="text-3xl font-extrabold mb-6 text-indigo-400 border-b border-indigo-500/30 pb-2">
           IPC Debugging & Visualization Tool
         </h1>
 
-        {/* Configuration Panel */}
-        <div className="grid md:grid-cols-3 gap-4 mb-8 p-4 bg-zinc-800 rounded-xl shadow-lg">
+        {/* Configuration Panel - Responsive Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8 p-4 bg-zinc-800 rounded-xl shadow-lg">
+          {/* Items stack nicely on mobile due to grid-cols-1 */}
           <div>
             <label className="block text-sm font-medium mb-1 text-gray-300">IPC Mechanism</label>
             <select
@@ -572,7 +570,7 @@ const App = () => {
         <FlowDiagramGuide ipcType={ipcType} />
 
         {/* Control and Metrics */}
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 space-y-4 sm:space-y-0">
           <div className='flex space-x-3'>
             <button
               onClick={() => setIsRunning(prev => !prev)}
@@ -581,7 +579,7 @@ const App = () => {
               }`}
             >
               {isRunning ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
-              <span>{isRunning ? 'Pause Simulation' : 'Start Simulation'}</span>
+              <span>{isRunning ? 'Pause' : 'Start'} Simulation</span>
             </button>
             <button
               onClick={resetSimulation}
@@ -598,8 +596,8 @@ const App = () => {
           </div>
         </div>
 
-        {/* Performance Metrics Panel (Revision 4) */}
-        <div className="grid md:grid-cols-3 gap-4 mb-8 p-4 bg-zinc-800 rounded-xl shadow-lg border border-indigo-500/30">
+        {/* Performance Metrics Panel (Revision 4) - Responsive Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8 p-4 bg-zinc-800 rounded-xl shadow-lg border border-indigo-500/30">
             <MetricCard 
                 icon={TrendingUp} 
                 title="Throughput" 
@@ -623,10 +621,10 @@ const App = () => {
             />
         </div>
 
-        {/* Process Monitors and Visualization */}
-        <div className="grid md:grid-cols-3 gap-6 mb-8 items-center">
+        {/* Process Monitors and Visualization - Responsive Stack */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 items-center">
           <ProcessMonitor name="Producer A" state={processAState} speed={producerSpeed} />
-          <div className="flex justify-center items-center">
+          <div className="flex justify-center items-center w-full"> {/* w-full ensures visualization component uses available space */}
             <IPCVisualization />
           </div>
           <ProcessMonitor name="Consumer B" state={processBState} speed={consumerSpeed} />
@@ -659,7 +657,7 @@ const App = () => {
   );
 };
 
-// NEW Metric Card Component for clean display
+// Metric Card Component (Revision 4)
 const MetricCard = ({ icon: Icon, title, value, unit, color }) => (
     <div className="p-3 bg-zinc-700 rounded-lg flex items-center space-x-3">
         <Icon className={`w-6 h-6 ${color}`} />
