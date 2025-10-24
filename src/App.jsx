@@ -1,0 +1,508 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Play, Pause, RotateCcw, Zap, AlertTriangle, Cpu, Lock, Unlock, HardHat, Skull } from 'lucide-react';
+
+// --- Configuration Constants ---
+const IPC_TYPES = {
+  PIPE: 'Pipe (FIFO)',
+  QUEUE: 'Message Queue',
+  SHARED_MEMORY: 'Shared Memory (Mutex)',
+  // New type for demonstration of deadlocks (Resource Allocation Graph scenario)
+  RESOURCES_DEADLOCK: 'Resource Deadlock (Simulated)', 
+};
+const MAX_BUFFER_SIZE = 10;
+const INITIAL_SHARED_MEMORY = { value: 0, accessed: 0 };
+const INITIAL_PROCESS_STATE = 'IDLE';
+const INITIAL_LOCK_STATE = null; // null or 'A' or 'B'
+
+// Resource Simulation State
+const INITIAL_RESOURCE_STATE = {
+  R1: { heldBy: null, requestedBy: null },
+  R2: { heldBy: null, requestedBy: null },
+  deadlock: false,
+};
+
+// --- Helper Functions ---
+const generateChunk = () => Math.floor(Math.random() * 9) + 1;
+const getStatusColor = (status) => {
+  switch (status) {
+    case 'RUNNING': return 'bg-green-500';
+    case 'BLOCKED': return 'bg-yellow-500';
+    case 'DEADLOCKED': return 'bg-red-600 animate-pulse'; // Updated for Deadlock
+    case 'WAITING': return 'bg-blue-500';
+    default: return 'bg-gray-500';
+  }
+};
+const getLogColor = (type) => {
+  switch (type) {
+    case 'ERROR': return 'text-red-400 font-bold';
+    case 'WARNING': return 'text-yellow-400';
+    case 'DEADLOCK': return 'text-red-500 font-extrabold'; // New log type
+    default: return 'text-gray-300';
+  }
+};
+
+const App = () => {
+  // --- Simulation State (IPC Engine Core) ---
+  const [isRunning, setIsRunning] = useState(false);
+  const [ipcType, setIpcType] = useState(IPC_TYPES.PIPE);
+  const [producerSpeed, setProducerSpeed] = useState(500); // ms
+  const [consumerSpeed, setConsumerSpeed] = useState(800);  // ms
+  const [buffer, setBuffer] = useState([]); 
+  const [sharedMemory, setSharedMemory] = useState(INITIAL_SHARED_MEMORY);
+  const [lockHeldBy, setLockHeldBy] = useState(INITIAL_LOCK_STATE); 
+  const [resources, setResources] = useState(INITIAL_RESOURCE_STATE); // NEW state for Deadlock Sim
+  const [processAState, setProcessAState] = useState(INITIAL_PROCESS_STATE); 
+  const [processBState, setProcessBState] = useState(INITIAL_PROCESS_STATE); 
+  const [logs, setLogs] = useState([]);
+  const [metrics, setMetrics] = useState({ produced: 0, consumed: 0, aWaitTime: 0, bWaitTime: 0, cycle: 0 });
+
+  const intervalRef = useRef(null);
+  const cycleRef = useRef(0); // Use a ref to ensure correct cycle for speed checks
+
+  const addLog = useCallback((type, message) => {
+    setLogs(prev => [{ timestamp: new Date().toLocaleTimeString(), type, message }, ...prev].slice(0, 50));
+  }, []);
+
+  const resetSimulation = useCallback(() => {
+    clearInterval(intervalRef.current);
+    setIsRunning(false);
+    setBuffer([]);
+    setSharedMemory(INITIAL_SHARED_MEMORY);
+    setLockHeldBy(INITIAL_LOCK_STATE);
+    setResources(INITIAL_RESOURCE_STATE); // Reset resources
+    setProcessAState(INITIAL_PROCESS_STATE);
+    setProcessBState(INITIAL_PROCESS_STATE);
+    setLogs([]);
+    setMetrics({ produced: 0, consumed: 0, aWaitTime: 0, bWaitTime: 0, cycle: 0 });
+    cycleRef.current = 0;
+  }, []);
+  
+  // --- Resource Deadlock Simulation Logic ---
+  const runDeadlockProcessA = useCallback(() => {
+    // P-A needs R1 then R2
+    if (resources.deadlock) {
+      setProcessAState('DEADLOCKED');
+      return;
+    }
+
+    // 1. Try to Acquire R1 (Held by nobody or A)
+    if (resources.R1.heldBy === null) {
+      setResources(prev => ({ ...prev, R1: { heldBy: 'A', requestedBy: null } }));
+      setProcessAState('RUNNING');
+      addLog('INFO', '[P-A] Acquired Resource R1.');
+    } else if (resources.R1.heldBy === 'B') {
+      setResources(prev => ({ ...prev, R1: { ...prev.R1, requestedBy: 'A' } }));
+      setProcessAState('BLOCKED');
+      addLog('WARNING', '[P-A] Waiting for R1 (held by P-B).');
+    }
+
+    // 2. If R1 held by A, try to Acquire R2 (creates circular wait)
+    if (resources.R1.heldBy === 'A' && resources.R2.heldBy === null) {
+      setResources(prev => ({ ...prev, R2: { heldBy: 'A', requestedBy: null } }));
+      setProcessAState('RUNNING');
+      addLog('INFO', '[P-A] Acquired Resource R2. Task Complete!');
+      // Release R1 and R2
+      setResources(INITIAL_RESOURCE_STATE);
+    } else if (resources.R1.heldBy === 'A' && resources.R2.heldBy === 'B') {
+      setResources(prev => ({ ...prev, R2: { ...prev.R2, requestedBy: 'A' } }));
+      setProcessAState('BLOCKED');
+      // Deadlock condition is met if P-B is also blocked waiting for R1
+      if (resources.R1.requestedBy === 'B') {
+        setResources(prev => ({ ...prev, deadlock: true }));
+      }
+    }
+  }, [resources, addLog]);
+
+  const runDeadlockProcessB = useCallback(() => {
+    // P-B needs R2 then R1
+    if (resources.deadlock) {
+      setProcessBState('DEADLOCKED');
+      return;
+    }
+
+    // 1. Try to Acquire R2 (Held by nobody or B)
+    if (resources.R2.heldBy === null) {
+      setResources(prev => ({ ...prev, R2: { heldBy: 'B', requestedBy: null } }));
+      setProcessBState('RUNNING');
+      addLog('INFO', '[P-B] Acquired Resource R2.');
+    } else if (resources.R2.heldBy === 'A') {
+      setResources(prev => ({ ...prev, R2: { ...prev.R2, requestedBy: 'B' } }));
+      setProcessBState('BLOCKED');
+      addLog('WARNING', '[P-B] Waiting for R2 (held by P-A).');
+    }
+
+    // 2. If R2 held by B, try to Acquire R1 (creates circular wait)
+    if (resources.R2.heldBy === 'B' && resources.R1.heldBy === null) {
+      setResources(prev => ({ ...prev, R1: { heldBy: 'B', requestedBy: null } }));
+      setProcessBState('RUNNING');
+      addLog('INFO', '[P-B] Acquired Resource R1. Task Complete!');
+      // Release R1 and R2
+      setResources(INITIAL_RESOURCE_STATE);
+    } else if (resources.R2.heldBy === 'B' && resources.R1.heldBy === 'A') {
+      setResources(prev => ({ ...prev, R1: { ...prev.R1, requestedBy: 'B' } }));
+      setProcessBState('BLOCKED');
+      // Deadlock condition is met if P-A is also blocked waiting for R2
+      if (resources.R2.requestedBy === 'A') {
+        setResources(prev => ({ ...prev, deadlock: true }));
+      }
+    }
+  }, [resources, addLog]);
+  // --- End Deadlock Simulation Logic ---
+
+
+  // --- Process A (Producer/Writer) Logic ---
+  const runProcessA = useCallback(() => {
+    if (ipcType === IPC_TYPES.RESOURCES_DEADLOCK) {
+        runDeadlockProcessA();
+        return;
+    }
+
+    // (Existing PIPE/QUEUE/SHARED_MEMORY logic remains the same)
+    if (ipcType === IPC_TYPES.PIPE || ipcType === IPC_TYPES.QUEUE) {
+      if (buffer.length < MAX_BUFFER_SIZE) {
+        const chunk = generateChunk();
+        setBuffer(prev => [...prev, chunk]);
+        setMetrics(m => ({ ...m, produced: m.produced + 1 }));
+        setProcessAState('RUNNING');
+        addLog('INFO', `[P-A] Produced chunk: ${chunk}. Buffer size: ${buffer.length + 1}/${MAX_BUFFER_SIZE}`);
+      } else {
+        setProcessAState('BLOCKED');
+        setMetrics(m => ({ ...m, aWaitTime: m.aWaitTime + 1 }));
+        addLog('WARNING', '[P-A] Buffer Full. Producer Blocked (Bottleneck)');
+      }
+    } else if (ipcType === IPC_TYPES.SHARED_MEMORY) {
+      if (lockHeldBy === 'B') {
+        setProcessAState('WAITING');
+        setMetrics(m => ({ ...m, aWaitTime: m.aWaitTime + 1 }));
+      } else if (lockHeldBy === null) {
+        setLockHeldBy('A');
+        setProcessAState('RUNNING');
+        const newValue = sharedMemory.value + 1;
+        setSharedMemory({ value: newValue, accessed: sharedMemory.accessed + 1 });
+        setMetrics(m => ({ ...m, produced: m.produced + 1 }));
+        addLog('INFO', `[P-A] Wrote ${newValue} to Shared Mem. Lock Acquired.`);
+        setLockHeldBy(null);
+        addLog('INFO', '[P-A] Lock Released.');
+      }
+    }
+  }, [ipcType, buffer, lockHeldBy, sharedMemory.value, sharedMemory.accessed, addLog, runDeadlockProcessA]);
+
+  // --- Process B (Consumer/Reader) Logic ---
+  const runProcessB = useCallback(() => {
+    if (ipcType === IPC_TYPES.RESOURCES_DEADLOCK) {
+        runDeadlockProcessB();
+        return;
+    }
+
+    // (Existing PIPE/QUEUE/SHARED_MEMORY logic remains the same)
+    if (ipcType === IPC_TYPES.PIPE || ipcType === IPC_TYPES.QUEUE) {
+      if (buffer.length > 0) {
+        const chunk = buffer[0];
+        setBuffer(prev => prev.slice(1));
+        setMetrics(m => ({ ...m, consumed: m.consumed + 1 }));
+        setProcessBState('RUNNING');
+        addLog('INFO', `[C-B] Consumed chunk: ${chunk}. Buffer size: ${buffer.length - 1}/${MAX_BUFFER_SIZE}`);
+      } else {
+        setProcessBState('BLOCKED');
+        setMetrics(m => ({ ...m, bWaitTime: m.bWaitTime + 1 }));
+        addLog('WARNING', '[C-B] Buffer Empty. Consumer Blocked (Starvation)');
+      }
+    } else if (ipcType === IPC_TYPES.SHARED_MEMORY) {
+      if (lockHeldBy === 'A') {
+        setProcessBState('WAITING');
+        setMetrics(m => ({ ...m, bWaitTime: m.bWaitTime + 1 }));
+      } else if (lockHeldBy === null) {
+        setLockHeldBy('B');
+        setProcessBState('RUNNING');
+        const readValue = sharedMemory.value;
+        addLog('INFO', `[C-B] Read ${readValue} from Shared Mem. Lock Acquired.`);
+        setLockHeldBy(null);
+        setMetrics(m => ({ ...m, consumed: m.consumed + 1 }));
+        addLog('INFO', '[C-B] Lock Released.');
+      }
+    }
+  }, [ipcType, buffer, lockHeldBy, sharedMemory.value, addLog, runDeadlockProcessB]);
+
+  // --- Analysis and Reporting Module ---
+  const detectIssues = useCallback(() => {
+    // Check for DEADLOCK in the new simulation type
+    if (ipcType === IPC_TYPES.RESOURCES_DEADLOCK) {
+      if (resources.deadlock) {
+        addLog('DEADLOCK', '!!! DEADLOCK DETECTED !!! P-A holds R1, waits for R2. P-B holds R2, waits for R1 (Circular Wait).');
+        setProcessAState('DEADLOCKED');
+        setProcessBState('DEADLOCKED');
+        setIsRunning(false); // Stop simulation on Deadlock
+      }
+      return;
+    }
+
+    // 1. Bottleneck/Starvation Detection (for Pipes/Queues)
+    if (buffer.length === MAX_BUFFER_SIZE && processAState === 'BLOCKED') {
+      addLog('WARNING', 'Bottleneck: Persistent Producer Blocking (Consumer too slow)');
+    }
+    if (buffer.length === 0 && processBState === 'BLOCKED') {
+      addLog('WARNING', 'Starvation: Persistent Consumer Blocking (Producer too slow)');
+    }
+
+    // 2. High Contention Warning (for Shared Memory)
+    if (ipcType === IPC_TYPES.SHARED_MEMORY && processAState === 'WAITING' && processBState === 'WAITING' && lockHeldBy !== null) {
+        addLog('WARNING', 'High Contention: Both processes are constantly waiting for the Mutex.');
+    }
+
+    // 3. Race Condition Detection (Simulated Error Trigger - for Shared Memory)
+    if (ipcType === IPC_TYPES.SHARED_MEMORY && metrics.cycle % 100 === 0 && metrics.cycle > 0) {
+        setSharedMemory(prev => ({ ...prev, value: prev.value * 2, accessed: prev.accessed + 1 }));
+        addLog('ERROR', 'RACE CONDITION DETECTED! Data modified without lock protection (Simulated).');
+    }
+
+  }, [ipcType, buffer.length, processAState, processBState, lockHeldBy, addLog, metrics.cycle, resources]);
+
+  // --- Main Simulation Loop (Scheduler) ---
+  useEffect(() => {
+    if (isRunning) {
+      // Base clock tick (100ms)
+      intervalRef.current = setInterval(() => {
+        cycleRef.current += 1; // Update ref first
+        setMetrics(m => ({ ...m, cycle: m.cycle + 1 }));
+
+        // Scheduler Logic: Run processes based on their configured speeds
+        // Check if the current cycle is a multiple of the process speed (normalized to 100ms clock)
+        if (cycleRef.current % (producerSpeed / 100) === 0) {
+          runProcessA();
+        } else if (processAState !== 'DEADLOCKED') {
+          setProcessAState('IDLE');
+        }
+
+        if (cycleRef.current % (consumerSpeed / 100) === 0) {
+          runProcessB();
+        } else if (processBState !== 'DEADLOCKED') {
+          setProcessBState('IDLE');
+        }
+
+        detectIssues();
+
+      }, 100); 
+
+    } else {
+      clearInterval(intervalRef.current);
+    }
+
+    return () => clearInterval(intervalRef.current);
+  }, [isRunning, producerSpeed, consumerSpeed, runProcessA, runProcessB, detectIssues, processAState, processBState]);
+
+  // --- Visualization and UI Components ---
+  
+  // Visualization of the IPC medium
+  const IPCVisualization = () => {
+    const isDeadlockSim = ipcType === IPC_TYPES.RESOURCES_DEADLOCK;
+    const isShared = ipcType === IPC_TYPES.SHARED_MEMORY;
+    const isPipe = ipcType === IPC_TYPES.PIPE || ipcType === IPC_TYPES.QUEUE;
+    const isContended = lockHeldBy !== null;
+
+    if (isDeadlockSim) {
+      return (
+        <div className="flex flex-col items-center p-4 bg-zinc-700 rounded-lg shadow-inner">
+          <p className='text-sm text-indigo-300 font-semibold mb-3'>Resource Allocation Graph Simulation</p>
+          <div className="flex space-x-8 items-start">
+            {/* Resource 1 (R1) */}
+            <ResourceBox name="R1" resource={resources.R1} />
+            {/* Resource 2 (R2) */}
+            <ResourceBox name="R2" resource={resources.R2} />
+          </div>
+          {resources.deadlock && (
+            <div className="mt-4 p-2 bg-red-800/50 border border-red-500 rounded-lg flex items-center space-x-2 w-full justify-center">
+                <Skull className='w-5 h-5 text-red-400 animate-pulse' />
+                <span className='font-bold text-red-300'>Circular Wait Detected! (Deadlock)</span>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (isShared) {
+      return (
+        <div className="flex flex-col items-center p-4 bg-zinc-700 rounded-lg shadow-inner">
+          <div className={`w-full p-4 text-center rounded-lg font-mono text-xl transition-all duration-300 ${isContended ? 'bg-red-900 ring-4 ring-red-500' : 'bg-gray-800'}`}>
+            <span className="text-gray-400">Memory Segment: </span>
+            <span className="font-bold text-white">{sharedMemory.value}</span>
+          </div>
+          <p className="mt-2 text-sm text-gray-400">Accesses: {sharedMemory.accessed} | Lock Status: {lockHeldBy ? `Held by P-${lockHeldBy}` : 'Free'}</p>
+        </div>
+      );
+    }
+
+    if (isPipe) {
+      return (
+        <div className="flex flex-col items-center w-full">
+          <div className="flex flex-row space-x-0.5 w-full h-10 bg-zinc-700 p-1 rounded-lg">
+            {/* Renders buffer slots, showing data from left (oldest/to be consumed) to right (newest/produced) */}
+            {Array.from({ length: MAX_BUFFER_SIZE }).map((_, index) => (
+              <div key={index} className="flex-1 h-full flex items-center justify-center relative">
+                <div className={`h-full w-full rounded transition-all duration-500 ${index < buffer.length ? 'bg-indigo-500' : 'bg-zinc-800'}`}>
+                  {/* Display chunk value inside the buffer slot */}
+                  {buffer[index] !== undefined && (
+                    <span className="text-xs font-mono text-white absolute inset-0 flex items-center justify-center">
+                      {buffer[index]}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 text-sm text-gray-400">{ipcType} Status: {buffer.length}/{MAX_BUFFER_SIZE} filled</p>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  // NEW: Resource Box for Deadlock Visualization
+  const ResourceBox = ({ name, resource }) => (
+    <div className={`p-4 rounded-lg w-40 text-center shadow-lg transition-all duration-300 ${resource.heldBy ? 'bg-indigo-700 ring-2 ring-indigo-400' : 'bg-zinc-800'}`}>
+      <div className="font-bold text-lg text-white mb-2">{name}</div>
+      <div className='text-sm text-gray-300'>
+        {resource.heldBy ? (
+          <span className='flex items-center justify-center text-sm font-semibold'>
+            <Lock className='w-4 h-4 mr-1' /> Held by P-{resource.heldBy}
+          </span>
+        ) : (
+          <span className='flex items-center justify-center text-sm text-green-400'>
+            <Unlock className='w-4 h-4 mr-1' /> Free
+          </span>
+        )}
+      </div>
+      {resource.requestedBy && (
+        <div className='mt-2 text-xs font-mono text-yellow-300 bg-zinc-700/50 p-1 rounded'>
+          Req: P-{resource.requestedBy}
+        </div>
+      )}
+    </div>
+  );
+
+  // Process Status Component (GUI Module)
+  const ProcessMonitor = ({ name, state, speed }) => (
+    <div className="p-3 bg-zinc-700 rounded-lg flex items-center justify-between shadow-md">
+      <div className="flex items-center space-x-3">
+        <Cpu className="w-6 h-6 text-gray-300" />
+        <span className="font-semibold text-white">{name} (P-{name.slice(-1)})</span>
+      </div>
+      <div className="flex flex-col items-end">
+        <div className="flex items-center space-x-2">
+          <div className={`w-3 h-3 rounded-full ${getStatusColor(state)}`}></div>
+          <span className="text-sm font-mono text-gray-200">{state}</span>
+        </div>
+        {!resources.deadlock && <span className="text-xs text-gray-400 mt-1">Speed: {speed}ms/op</span>}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-gray-900 text-gray-100 p-4 font-sans">
+      <div className="max-w-4xl mx-auto">
+        <h1 className="text-3xl font-extrabold mb-6 text-indigo-400 border-b border-indigo-500/30 pb-2">
+          IPC Debugging & Visualization Tool
+        </h1>
+
+        {/* Configuration Panel */}
+        <div className="grid md:grid-cols-3 gap-4 mb-8 p-4 bg-zinc-800 rounded-xl shadow-lg">
+          <div>
+            <label className="block text-sm font-medium mb-1 text-gray-300">IPC Mechanism</label>
+            <select
+              value={ipcType}
+              onChange={(e) => {
+                setIpcType(e.target.value);
+                resetSimulation();
+              }}
+              className="w-full p-2 rounded-lg bg-zinc-700 border border-zinc-600 text-white focus:ring-indigo-500 focus:border-indigo-500"
+              disabled={isRunning}
+            >
+              {Object.values(IPC_TYPES).map(type => <option key={type} value={type}>{type}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1 text-gray-300">Producer A Speed (ms)</label>
+            <input
+              type="number"
+              value={producerSpeed}
+              onChange={(e) => setProducerSpeed(Math.max(100, parseInt(e.target.value) || 100))}
+              className="w-full p-2 rounded-lg bg-zinc-700 border border-zinc-600 text-white focus:ring-indigo-500 focus:border-indigo-500"
+              disabled={isRunning}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1 text-gray-300">Consumer B Speed (ms)</label>
+            <input
+              type="number"
+              value={consumerSpeed}
+              onChange={(e) => setConsumerSpeed(Math.max(100, parseInt(e.target.value) || 100))}
+              className="w-full p-2 rounded-lg bg-zinc-700 border border-zinc-600 text-white focus:ring-indigo-500 focus:border-indigo-500"
+              disabled={isRunning}
+            />
+          </div>
+        </div>
+
+        {/* Control and Metrics */}
+        <div className="flex justify-between items-center mb-6">
+          <div className='flex space-x-3'>
+            <button
+              onClick={() => setIsRunning(prev => !prev)}
+              className={`p-3 rounded-lg font-bold flex items-center space-x-2 transition-colors ${
+                isRunning ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-green-600 hover:bg-green-700'
+              }`}
+            >
+              {isRunning ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+              <span>{isRunning ? 'Pause Simulation' : 'Start Simulation'}</span>
+            </button>
+            <button
+              onClick={resetSimulation}
+              className="p-3 rounded-lg bg-red-600 hover:bg-red-700 font-bold flex items-center space-x-2 transition-colors"
+            >
+              <RotateCcw className="w-5 h-5" />
+              <span>Reset</span>
+            </button>
+          </div>
+          
+          <div className="text-right text-sm">
+            <p className="text-gray-400">Total Cycles: <span className="font-bold text-white">{metrics.cycle}</span></p>
+            <p className="text-gray-400">Data Transferred: <span className="font-bold text-white">{metrics.produced} Produced / {metrics.consumed} Consumed</span></p>
+          </div>
+        </div>
+
+        {/* Process Monitors and Visualization */}
+        <div className="grid md:grid-cols-3 gap-6 mb-8 items-center">
+          <ProcessMonitor name="Producer A" state={processAState} speed={producerSpeed} />
+          <div className="flex justify-center items-center">
+            <IPCVisualization />
+          </div>
+          <ProcessMonitor name="Consumer B" state={processBState} speed={consumerSpeed} />
+        </div>
+
+        {/* Debugging Console / Logs */}
+        <div className="mt-8">
+          <h2 className="text-xl font-bold mb-3 text-red-400 flex items-center space-x-2">
+            <Zap className="w-6 h-6" />
+            <span>Debugging Console & Issues ({logs.filter(l => l.type === 'ERROR' || l.type === 'WARNING' || l.type === 'DEADLOCK').length} Alerts)</span>
+          </h2>
+          <div className="bg-zinc-800 rounded-lg p-3 h-64 overflow-y-auto font-mono text-xs shadow-inner border border-zinc-700">
+            {logs.length > 0 ? (
+              logs.map((log, index) => (
+                <div key={index} className={`mb-1 ${getLogColor(log.type)}`}>
+                  <span className="text-gray-500 mr-2">[{log.timestamp}]</span>
+                  {log.type === 'WARNING' && <AlertTriangle className="w-3 h-3 inline-block mr-1 text-yellow-400" />}
+                  {log.type === 'ERROR' && <HardHat className="w-3 h-3 inline-block mr-1 text-red-400" />}
+                  {log.type === 'DEADLOCK' && <Skull className="w-3 h-3 inline-block mr-1 text-red-500" />}
+                  {log.message}
+                </div>
+              ))
+            ) : (
+              <p className="text-gray-500">Awaiting simulation start. Logs will appear here.</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default App;
