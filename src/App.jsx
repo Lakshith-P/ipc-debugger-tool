@@ -1,20 +1,19 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, Pause, RotateCcw, Zap, AlertTriangle, Cpu, Lock, Unlock, HardHat, Skull } from 'lucide-react';
+import { Play, Pause, RotateCcw, Zap, AlertTriangle, Cpu, Lock, Unlock, HardHat, Skull, Send, Server } from 'lucide-react';
 
 // --- Configuration Constants ---
 const IPC_TYPES = {
   PIPE: 'Pipe (FIFO)',
-  QUEUE: 'Message Queue',
+  QUEUE: 'Message Queue (Priority)', // Renamed for clarity
   SHARED_MEMORY: 'Shared Memory (Mutex)',
-  // New type for demonstration of deadlocks (Resource Allocation Graph scenario)
   RESOURCES_DEADLOCK: 'Resource Deadlock (Simulated)', 
 };
 const MAX_BUFFER_SIZE = 10;
 const INITIAL_SHARED_MEMORY = { value: 0, accessed: 0 };
 const INITIAL_PROCESS_STATE = 'IDLE';
-const INITIAL_LOCK_STATE = null; // null or 'A' or 'B'
+const INITIAL_LOCK_STATE = null; 
 
-// Resource Simulation State
+// Resource Simulation State (from Revision 2)
 const INITIAL_RESOURCE_STATE = {
   R1: { heldBy: null, requestedBy: null },
   R2: { heldBy: null, requestedBy: null },
@@ -22,12 +21,19 @@ const INITIAL_RESOURCE_STATE = {
 };
 
 // --- Helper Functions ---
-const generateChunk = () => Math.floor(Math.random() * 9) + 1;
+// Now returns an object { value: number, priority: 1|2|3 }
+const generateChunk = () => {
+    const priority = Math.floor(Math.random() * 3) + 1; // 1 (High) to 3 (Low)
+    return { 
+        value: Math.floor(Math.random() * 9) + 1, 
+        priority: priority
+    };
+};
 const getStatusColor = (status) => {
   switch (status) {
     case 'RUNNING': return 'bg-green-500';
     case 'BLOCKED': return 'bg-yellow-500';
-    case 'DEADLOCKED': return 'bg-red-600 animate-pulse'; // Updated for Deadlock
+    case 'DEADLOCKED': return 'bg-red-600 animate-pulse';
     case 'WAITING': return 'bg-blue-500';
     default: return 'bg-gray-500';
   }
@@ -36,10 +42,18 @@ const getLogColor = (type) => {
   switch (type) {
     case 'ERROR': return 'text-red-400 font-bold';
     case 'WARNING': return 'text-yellow-400';
-    case 'DEADLOCK': return 'text-red-500 font-extrabold'; // New log type
+    case 'DEADLOCK': return 'text-red-500 font-extrabold';
     default: return 'text-gray-300';
   }
 };
+const getPriorityColor = (priority) => {
+    switch(priority) {
+        case 1: return 'bg-red-500'; // Highest Priority
+        case 2: return 'bg-yellow-500';
+        case 3: return 'bg-green-500'; // Lowest Priority
+        default: return 'bg-gray-500';
+    }
+}
 
 const App = () => {
   // --- Simulation State (IPC Engine Core) ---
@@ -47,17 +61,17 @@ const App = () => {
   const [ipcType, setIpcType] = useState(IPC_TYPES.PIPE);
   const [producerSpeed, setProducerSpeed] = useState(500); // ms
   const [consumerSpeed, setConsumerSpeed] = useState(800);  // ms
-  const [buffer, setBuffer] = useState([]); 
+  const [buffer, setBuffer] = useState([]); // Stores [{value, priority}, ...]
   const [sharedMemory, setSharedMemory] = useState(INITIAL_SHARED_MEMORY);
   const [lockHeldBy, setLockHeldBy] = useState(INITIAL_LOCK_STATE); 
-  const [resources, setResources] = useState(INITIAL_RESOURCE_STATE); // NEW state for Deadlock Sim
+  const [resources, setResources] = useState(INITIAL_RESOURCE_STATE); 
   const [processAState, setProcessAState] = useState(INITIAL_PROCESS_STATE); 
   const [processBState, setProcessBState] = useState(INITIAL_PROCESS_STATE); 
   const [logs, setLogs] = useState([]);
   const [metrics, setMetrics] = useState({ produced: 0, consumed: 0, aWaitTime: 0, bWaitTime: 0, cycle: 0 });
 
   const intervalRef = useRef(null);
-  const cycleRef = useRef(0); // Use a ref to ensure correct cycle for speed checks
+  const cycleRef = useRef(0);
 
   const addLog = useCallback((type, message) => {
     setLogs(prev => [{ timestamp: new Date().toLocaleTimeString(), type, message }, ...prev].slice(0, 50));
@@ -69,7 +83,7 @@ const App = () => {
     setBuffer([]);
     setSharedMemory(INITIAL_SHARED_MEMORY);
     setLockHeldBy(INITIAL_LOCK_STATE);
-    setResources(INITIAL_RESOURCE_STATE); // Reset resources
+    setResources(INITIAL_RESOURCE_STATE); 
     setProcessAState(INITIAL_PROCESS_STATE);
     setProcessBState(INITIAL_PROCESS_STATE);
     setLogs([]);
@@ -77,15 +91,10 @@ const App = () => {
     cycleRef.current = 0;
   }, []);
   
-  // --- Resource Deadlock Simulation Logic ---
+  // --- Resource Deadlock Simulation Logic (Revision 2) ---
   const runDeadlockProcessA = useCallback(() => {
-    // P-A needs R1 then R2
-    if (resources.deadlock) {
-      setProcessAState('DEADLOCKED');
-      return;
-    }
+    if (resources.deadlock) { setProcessAState('DEADLOCKED'); return; }
 
-    // 1. Try to Acquire R1 (Held by nobody or A)
     if (resources.R1.heldBy === null) {
       setResources(prev => ({ ...prev, R1: { heldBy: 'A', requestedBy: null } }));
       setProcessAState('RUNNING');
@@ -96,17 +105,14 @@ const App = () => {
       addLog('WARNING', '[P-A] Waiting for R1 (held by P-B).');
     }
 
-    // 2. If R1 held by A, try to Acquire R2 (creates circular wait)
     if (resources.R1.heldBy === 'A' && resources.R2.heldBy === null) {
       setResources(prev => ({ ...prev, R2: { heldBy: 'A', requestedBy: null } }));
       setProcessAState('RUNNING');
       addLog('INFO', '[P-A] Acquired Resource R2. Task Complete!');
-      // Release R1 and R2
       setResources(INITIAL_RESOURCE_STATE);
     } else if (resources.R1.heldBy === 'A' && resources.R2.heldBy === 'B') {
       setResources(prev => ({ ...prev, R2: { ...prev.R2, requestedBy: 'A' } }));
       setProcessAState('BLOCKED');
-      // Deadlock condition is met if P-B is also blocked waiting for R1
       if (resources.R1.requestedBy === 'B') {
         setResources(prev => ({ ...prev, deadlock: true }));
       }
@@ -114,13 +120,8 @@ const App = () => {
   }, [resources, addLog]);
 
   const runDeadlockProcessB = useCallback(() => {
-    // P-B needs R2 then R1
-    if (resources.deadlock) {
-      setProcessBState('DEADLOCKED');
-      return;
-    }
+    if (resources.deadlock) { setProcessBState('DEADLOCKED'); return; }
 
-    // 1. Try to Acquire R2 (Held by nobody or B)
     if (resources.R2.heldBy === null) {
       setResources(prev => ({ ...prev, R2: { heldBy: 'B', requestedBy: null } }));
       setProcessBState('RUNNING');
@@ -131,17 +132,14 @@ const App = () => {
       addLog('WARNING', '[P-B] Waiting for R2 (held by P-A).');
     }
 
-    // 2. If R2 held by B, try to Acquire R1 (creates circular wait)
     if (resources.R2.heldBy === 'B' && resources.R1.heldBy === null) {
       setResources(prev => ({ ...prev, R1: { heldBy: 'B', requestedBy: null } }));
       setProcessBState('RUNNING');
       addLog('INFO', '[P-B] Acquired Resource R1. Task Complete!');
-      // Release R1 and R2
       setResources(INITIAL_RESOURCE_STATE);
     } else if (resources.R2.heldBy === 'B' && resources.R1.heldBy === 'A') {
       setResources(prev => ({ ...prev, R1: { ...prev.R1, requestedBy: 'B' } }));
       setProcessBState('BLOCKED');
-      // Deadlock condition is met if P-A is also blocked waiting for R2
       if (resources.R2.requestedBy === 'A') {
         setResources(prev => ({ ...prev, deadlock: true }));
       }
@@ -157,14 +155,14 @@ const App = () => {
         return;
     }
 
-    // (Existing PIPE/QUEUE/SHARED_MEMORY logic remains the same)
     if (ipcType === IPC_TYPES.PIPE || ipcType === IPC_TYPES.QUEUE) {
       if (buffer.length < MAX_BUFFER_SIZE) {
-        const chunk = generateChunk();
+        // Generates chunk with priority (Revision 3 change)
+        const chunk = generateChunk(); 
         setBuffer(prev => [...prev, chunk]);
         setMetrics(m => ({ ...m, produced: m.produced + 1 }));
         setProcessAState('RUNNING');
-        addLog('INFO', `[P-A] Produced chunk: ${chunk}. Buffer size: ${buffer.length + 1}/${MAX_BUFFER_SIZE}`);
+        addLog('INFO', `[P-A] Produced chunk: ${chunk.value} (Prio: ${chunk.priority}). Buffer size: ${buffer.length + 1}/${MAX_BUFFER_SIZE}`);
       } else {
         setProcessAState('BLOCKED');
         setMetrics(m => ({ ...m, aWaitTime: m.aWaitTime + 1 }));
@@ -194,19 +192,36 @@ const App = () => {
         return;
     }
 
-    // (Existing PIPE/QUEUE/SHARED_MEMORY logic remains the same)
-    if (ipcType === IPC_TYPES.PIPE || ipcType === IPC_TYPES.QUEUE) {
-      if (buffer.length > 0) {
-        const chunk = buffer[0];
-        setBuffer(prev => prev.slice(1));
-        setMetrics(m => ({ ...m, consumed: m.consumed + 1 }));
-        setProcessBState('RUNNING');
-        addLog('INFO', `[C-B] Consumed chunk: ${chunk}. Buffer size: ${buffer.length - 1}/${MAX_BUFFER_SIZE}`);
-      } else {
+    if (buffer.length === 0) {
         setProcessBState('BLOCKED');
         setMetrics(m => ({ ...m, bWaitTime: m.bWaitTime + 1 }));
         addLog('WARNING', '[C-B] Buffer Empty. Consumer Blocked (Starvation)');
-      }
+        return;
+    }
+
+    if (ipcType === IPC_TYPES.PIPE) {
+      // PIPE: FIFO - consume the first element (index 0)
+      const chunk = buffer[0];
+      setBuffer(prev => prev.slice(1));
+      setMetrics(m => ({ ...m, consumed: m.consumed + 1 }));
+      setProcessBState('RUNNING');
+      addLog('INFO', `[C-B] Consumed chunk: ${chunk.value} (FIFO). Buffer size: ${buffer.length - 1}/${MAX_BUFFER_SIZE}`);
+      
+    } else if (ipcType === IPC_TYPES.QUEUE) {
+      // QUEUE: Priority Consumption - find the highest priority (lowest number)
+      const highestPriorityIndex = buffer.reduce((bestIndex, current, currentIndex) => {
+        return current.priority < buffer[bestIndex].priority ? currentIndex : bestIndex;
+      }, 0);
+
+      const chunk = buffer[highestPriorityIndex];
+      
+      // Remove the chunk at the highestPriorityIndex
+      setBuffer(prev => prev.filter((_, index) => index !== highestPriorityIndex));
+      
+      setMetrics(m => ({ ...m, consumed: m.consumed + 1 }));
+      setProcessBState('RUNNING');
+      addLog('INFO', `[C-B] Consumed chunk: ${chunk.value} (PRIO ${chunk.priority}). Buffer size: ${buffer.length - 1}/${MAX_BUFFER_SIZE}`);
+
     } else if (ipcType === IPC_TYPES.SHARED_MEMORY) {
       if (lockHeldBy === 'A') {
         setProcessBState('WAITING');
@@ -225,13 +240,12 @@ const App = () => {
 
   // --- Analysis and Reporting Module ---
   const detectIssues = useCallback(() => {
-    // Check for DEADLOCK in the new simulation type
     if (ipcType === IPC_TYPES.RESOURCES_DEADLOCK) {
       if (resources.deadlock) {
         addLog('DEADLOCK', '!!! DEADLOCK DETECTED !!! P-A holds R1, waits for R2. P-B holds R2, waits for R1 (Circular Wait).');
         setProcessAState('DEADLOCKED');
         setProcessBState('DEADLOCKED');
-        setIsRunning(false); // Stop simulation on Deadlock
+        setIsRunning(false); 
       }
       return;
     }
@@ -260,13 +274,10 @@ const App = () => {
   // --- Main Simulation Loop (Scheduler) ---
   useEffect(() => {
     if (isRunning) {
-      // Base clock tick (100ms)
       intervalRef.current = setInterval(() => {
-        cycleRef.current += 1; // Update ref first
+        cycleRef.current += 1; 
         setMetrics(m => ({ ...m, cycle: m.cycle + 1 }));
 
-        // Scheduler Logic: Run processes based on their configured speeds
-        // Check if the current cycle is a multiple of the process speed (normalized to 100ms clock)
         if (cycleRef.current % (producerSpeed / 100) === 0) {
           runProcessA();
         } else if (processAState !== 'DEADLOCKED') {
@@ -296,17 +307,16 @@ const App = () => {
   const IPCVisualization = () => {
     const isDeadlockSim = ipcType === IPC_TYPES.RESOURCES_DEADLOCK;
     const isShared = ipcType === IPC_TYPES.SHARED_MEMORY;
-    const isPipe = ipcType === IPC_TYPES.PIPE || ipcType === IPC_TYPES.QUEUE;
+    const isPipeOrQueue = ipcType === IPC_TYPES.PIPE || ipcType === IPC_TYPES.QUEUE;
     const isContended = lockHeldBy !== null;
 
     if (isDeadlockSim) {
+      // (Deadlock Visualization remains the same)
       return (
         <div className="flex flex-col items-center p-4 bg-zinc-700 rounded-lg shadow-inner">
           <p className='text-sm text-indigo-300 font-semibold mb-3'>Resource Allocation Graph Simulation</p>
           <div className="flex space-x-8 items-start">
-            {/* Resource 1 (R1) */}
             <ResourceBox name="R1" resource={resources.R1} />
-            {/* Resource 2 (R2) */}
             <ResourceBox name="R2" resource={resources.R2} />
           </div>
           {resources.deadlock && (
@@ -320,6 +330,7 @@ const App = () => {
     }
 
     if (isShared) {
+      // (Shared Memory Visualization remains the same)
       return (
         <div className="flex flex-col items-center p-4 bg-zinc-700 rounded-lg shadow-inner">
           <div className={`w-full p-4 text-center rounded-lg font-mono text-xl transition-all duration-300 ${isContended ? 'bg-red-900 ring-4 ring-red-500' : 'bg-gray-800'}`}>
@@ -331,23 +342,35 @@ const App = () => {
       );
     }
 
-    if (isPipe) {
+    if (isPipeOrQueue) {
+      // Pipe/Queue Visualization (Updated to show priority)
       return (
         <div className="flex flex-col items-center w-full">
-          <div className="flex flex-row space-x-0.5 w-full h-10 bg-zinc-700 p-1 rounded-lg">
-            {/* Renders buffer slots, showing data from left (oldest/to be consumed) to right (newest/produced) */}
-            {Array.from({ length: MAX_BUFFER_SIZE }).map((_, index) => (
-              <div key={index} className="flex-1 h-full flex items-center justify-center relative">
-                <div className={`h-full w-full rounded transition-all duration-500 ${index < buffer.length ? 'bg-indigo-500' : 'bg-zinc-800'}`}>
-                  {/* Display chunk value inside the buffer slot */}
-                  {buffer[index] !== undefined && (
-                    <span className="text-xs font-mono text-white absolute inset-0 flex items-center justify-center">
-                      {buffer[index]}
-                    </span>
-                  )}
+          <div className="flex flex-row space-x-0.5 w-full h-14 bg-zinc-700 p-1 rounded-lg relative">
+            {ipcType === IPC_TYPES.QUEUE && (
+                <div className="absolute top-0 right-0 p-1 bg-indigo-700 text-xs rounded-bl-lg text-white font-semibold flex items-center">
+                    <Server className='w-3 h-3 mr-1' /> Priority Queue
                 </div>
-              </div>
-            ))}
+            )}
+            {Array.from({ length: MAX_BUFFER_SIZE }).map((_, index) => {
+                const item = buffer[index];
+                const isConsumedNext = ipcType === IPC_TYPES.QUEUE && item && index === buffer.reduce((bestIndex, current, currentIndex) => {
+                    return current.priority < buffer[bestIndex].priority ? currentIndex : bestIndex;
+                }, 0);
+
+                return (
+                    <div key={index} className="flex-1 h-full flex items-center justify-center relative">
+                        <div className={`h-full w-full rounded transition-all duration-500 ${item ? getPriorityColor(item.priority) : 'bg-zinc-800'} ${isConsumedNext ? 'ring-2 ring-yellow-300' : ''}`}>
+                            {item && (
+                                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                    <span className="text-sm font-bold text-white leading-none">{item.value}</span>
+                                    <span className="text-[10px] text-gray-900 font-mono">P{item.priority}</span>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                );
+            })}
           </div>
           <p className="mt-2 text-sm text-gray-400">{ipcType} Status: {buffer.length}/{MAX_BUFFER_SIZE} filled</p>
         </div>
@@ -357,7 +380,7 @@ const App = () => {
     return null;
   };
 
-  // NEW: Resource Box for Deadlock Visualization
+  // Resource Box for Deadlock Visualization (from Revision 2)
   const ResourceBox = ({ name, resource }) => (
     <div className={`p-4 rounded-lg w-40 text-center shadow-lg transition-all duration-300 ${resource.heldBy ? 'bg-indigo-700 ring-2 ring-indigo-400' : 'bg-zinc-800'}`}>
       <div className="font-bold text-lg text-white mb-2">{name}</div>
@@ -380,11 +403,11 @@ const App = () => {
     </div>
   );
 
-  // Process Status Component (GUI Module)
+  // Process Status Component 
   const ProcessMonitor = ({ name, state, speed }) => (
     <div className="p-3 bg-zinc-700 rounded-lg flex items-center justify-between shadow-md">
       <div className="flex items-center space-x-3">
-        <Cpu className="w-6 h-6 text-gray-300" />
+        {name.includes('Producer') ? <Send className="w-6 h-6 text-gray-300" /> : <Server className="w-6 h-6 text-gray-300" />}
         <span className="font-semibold text-white">{name} (P-{name.slice(-1)})</span>
       </div>
       <div className="flex flex-col items-end">
