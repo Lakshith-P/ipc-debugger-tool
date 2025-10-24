@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, Pause, RotateCcw, Zap, AlertTriangle, Cpu, Lock, Unlock, HardHat, Skull, Send, Server, TrendingUp, Clock } from 'lucide-react';
+import { Play, Pause, RotateCcw, Zap, AlertTriangle, Cpu, Lock, Unlock, HardHat, Skull, Send, Server, TrendingUp, Clock, ArrowRight, Shuffle, CircleDot, Dribbble } from 'lucide-react';
 
 // --- Configuration Constants ---
 const IPC_TYPES = {
@@ -102,7 +102,7 @@ const App = () => {
     cycleRef.current = 0;
   }, []);
   
-  // --- Metric Calculation Function (NEW) ---
+  // --- Metric Calculation Function (Revision 4) ---
   const calculatePerformanceMetrics = useCallback(() => {
     if (metrics.cycle < 10) return; // Wait for enough cycles to stabilize
 
@@ -348,7 +348,7 @@ const App = () => {
 
   // --- Visualization and UI Components ---
   
-  // Visualization of the IPC medium (Content unchanged from Revision 3)
+  // Visualization of the IPC medium 
   const IPCVisualization = () => {
     const isDeadlockSim = ipcType === IPC_TYPES.RESOURCES_DEADLOCK;
     const isShared = ipcType === IPC_TYPES.SHARED_MEMORY;
@@ -422,7 +422,7 @@ const App = () => {
     return null;
   };
 
-  // Resource Box for Deadlock Visualization (Content unchanged from Revision 3)
+  // Resource Box for Deadlock Visualization
   const ResourceBox = ({ name, resource }) => (
     <div className={`p-4 rounded-lg w-40 text-center shadow-lg transition-all duration-300 ${resource.heldBy ? 'bg-indigo-700 ring-2 ring-indigo-400' : 'bg-zinc-800'}`}>
       <div className="font-bold text-lg text-white mb-2">{name}</div>
@@ -445,7 +445,7 @@ const App = () => {
     </div>
   );
 
-  // Process Status Component (Content unchanged from Revision 3)
+  // Process Status Component
   const ProcessMonitor = ({ name, state, speed }) => (
     <div className="p-3 bg-zinc-700 rounded-lg flex items-center justify-between shadow-md">
       <div className="flex items-center space-x-3">
@@ -461,6 +461,67 @@ const App = () => {
       </div>
     </div>
   );
+
+  // NEW Component: Flow Diagram Guide (Revision 5)
+  const FlowDiagramGuide = ({ ipcType }) => {
+    let title = "IPC Mechanism Flow";
+    let flowSteps = [];
+
+    switch (ipcType) {
+      case IPC_TYPES.PIPE:
+        title = "Pipe (FIFO) Flow";
+        flowSteps = [
+          { icon: Send, text: "Producer sends data to the Pipe.", color: "text-indigo-400" },
+          { icon: ArrowRight, text: "Data is placed at the end of the buffer (FIFO).", color: "text-gray-400" },
+          { icon: Server, text: "Consumer reads data from the start of the buffer.", color: "text-green-400" },
+          { icon: CircleDot, text: "BLOCKS if buffer is full (Producer) or empty (Consumer).", color: "text-yellow-400" },
+        ];
+        break;
+      case IPC_TYPES.QUEUE:
+        title = "Message Queue (Priority) Flow";
+        flowSteps = [
+          { icon: Send, text: "Producer attaches a Priority (1=High, 3=Low) to the message.", color: "text-indigo-400" },
+          { icon: Shuffle, text: "Data is placed in the buffer according to its priority.", color: "text-gray-400" },
+          { icon: Server, text: "Consumer ignores order; always removes the HIGHEST priority item.", color: "text-green-400" },
+          { icon: CircleDot, text: "BLOCKS if buffer is full (Producer) or empty (Consumer).", color: "text-yellow-400" },
+        ];
+        break;
+      case IPC_TYPES.SHARED_MEMORY:
+        title = "Shared Memory (Mutex) Flow";
+        flowSteps = [
+          { icon: Lock, text: "Process must ACQUIRE Mutex before accessing shared memory.", color: "text-red-400" },
+          { icon: Dribbble, text: "Process R/W data (critical section).", color: "text-gray-400" },
+          { icon: Unlock, text: "Process RELEASE Mutex upon completion.", color: "text-red-400" },
+          { icon: CircleDot, text: "BLOCKS if Mutex is held by the other process (Contention).", color: "text-yellow-400" },
+        ];
+        break;
+      case IPC_TYPES.RESOURCES_DEADLOCK:
+        title = "Resource Deadlock (Simulated)";
+        flowSteps = [
+          { icon: Lock, text: "Process A holds R1, tries to acquire R2.", color: "text-red-400" },
+          { icon: Lock, text: "Process B holds R2, tries to acquire R1.", color: "text-red-400" },
+          { icon: Skull, text: "Circular wait condition detected. Simulation halts.", color: "text-red-500" },
+        ];
+        break;
+      default:
+        flowSteps = [{ icon: CircleDot, text: "Select an IPC Mechanism to view its flow.", color: "text-gray-500" }];
+        break;
+    }
+
+    return (
+      <div className="mb-8 p-4 bg-zinc-800 rounded-xl shadow-lg border border-indigo-500/30">
+        <h2 className="text-lg font-bold mb-3 text-indigo-400">{title}</h2>
+        <div className="flex flex-col space-y-2">
+          {flowSteps.map((step, index) => (
+            <div key={index} className="flex items-center space-x-3">
+              <step.icon className={`w-5 h-5 ${step.color}`} />
+              <p className="text-sm text-gray-300">{step.text}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 p-4 font-sans">
@@ -506,6 +567,9 @@ const App = () => {
             />
           </div>
         </div>
+        
+        {/* Flow Diagram Guide (Revision 5) */}
+        <FlowDiagramGuide ipcType={ipcType} />
 
         {/* Control and Metrics */}
         <div className="flex justify-between items-center mb-6">
@@ -534,7 +598,7 @@ const App = () => {
           </div>
         </div>
 
-        {/* Performance Metrics Panel (NEW) */}
+        {/* Performance Metrics Panel (Revision 4) */}
         <div className="grid md:grid-cols-3 gap-4 mb-8 p-4 bg-zinc-800 rounded-xl shadow-lg border border-indigo-500/30">
             <MetricCard 
                 icon={TrendingUp} 
