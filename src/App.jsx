@@ -657,7 +657,7 @@ const App = () => {
   );
 };
 
-// Metric Card Component (Revision 4)
+// Metric Card Component
 const MetricCard = ({ icon: Icon, title, value, unit, color }) => (
     <div className="p-3 bg-zinc-700 rounded-lg flex items-center space-x-3">
         <Icon className={`w-6 h-6 ${color}`} />
